@@ -1,10 +1,10 @@
 [tool]
-id = "com.thelightphone.app"
-label = "Light SDK Tool"
+id = "io.github.raphaeldelag.recorder"
+label = "Recorder"
 versionCode = 1
-versionName = "1.0.0"
-permissions = ["android.permission.INTERNET"]
+versionName = "0.1.0"
+permissions = ["android.permission.RECORD_AUDIO"]
 capabilities = []
-# change if you run this on an LP3!
-# serverPackage = "com.lightos"
+orientation = "portrait"
+# scripts/target.sh phone|emu rewrites the next line
 serverPackage = "com.thelightphone.sdk.emulator"
