@@ -42,8 +42,11 @@ class DetailViewModel(
     initial: Recording,
     private val repository: RecordingRepository,
     private val durations: DurationStore,
+    private val uploader: Uploader,
     audio: LightAudio,
 ) : LightViewModel<Unit>() {
+    val sending = MutableStateFlow(false)
+    val sent = MutableStateFlow(false)
     val recording = MutableStateFlow(initial)
     val positionMs = MutableStateFlow(0L)
     val durationMs = MutableStateFlow(0L)
@@ -67,6 +70,21 @@ class DetailViewModel(
 
     init {
         player.setSource(initial.file)
+        viewModelScope.launch { sent.value = uploader.sentAt(initial.name) != null }
+    }
+
+    fun send() {
+        if (sending.value) return
+        viewModelScope.launch {
+            val url = uploader.receiverUrl()
+            if (url == null) { message.value = "SET A RECEIVER IN SETTINGS FIRST"; return@launch }
+            sending.value = true; message.value = "SENDING…"
+            uploader.send(recording.value.file).fold(
+                { sent.value = true; message.value = "SENT" },
+                { message.value = "SEND FAILED: ${it.message}" },
+            )
+            sending.value = false
+        }
     }
 
     override fun onScreenHide(screen: SimpleLightScreen<Unit>) {
@@ -101,7 +119,10 @@ class DetailViewModel(
         val renamed = repository.relabel(current, label)
         if (renamed == null) { message.value = "RENAME FAILED"; return }
         recording.value = renamed
-        viewModelScope.launch { durations.move(current.name, renamed.name) }
+        viewModelScope.launch {
+            durations.move(current.name, renamed.name)
+            uploader.moveSent(current.name, renamed.name)
+        }
     }
 
     fun requestDelete() { player.pause(); confirmingDelete.value = true }
@@ -110,7 +131,7 @@ class DetailViewModel(
         player.stop()
         val current = recording.value
         if (repository.delete(current)) {
-            viewModelScope.launch { durations.remove(current.name) }
+            viewModelScope.launch { durations.remove(current.name); uploader.forgetSent(current.name) }
             deleted.value = true
         } else {
             message.value = "DELETE FAILED"
@@ -130,9 +151,10 @@ class DetailScreen(
     private val recording: Recording,
     private val repository: RecordingRepository,
     private val durations: DurationStore,
+    private val uploader: Uploader,
 ) : LightScreen<Unit, DetailViewModel>(sealedActivity) {
     override val viewModelClass = DetailViewModel::class.java
-    override fun createViewModel() = DetailViewModel(recording, repository, durations, DefaultLightAudio(sealedActivity))
+    override fun createViewModel() = DetailViewModel(recording, repository, durations, uploader, DefaultLightAudio(sealedActivity))
 
     @Composable
     override fun Content() {
@@ -144,6 +166,8 @@ class DetailScreen(
         val confirming by viewModel.confirmingDelete.collectAsState()
         val deleted by viewModel.deleted.collectAsState()
         val message by viewModel.message.collectAsState()
+        val sending by viewModel.sending.collectAsState()
+        val isSent by viewModel.sent.collectAsState()
 
         if (deleted) {
             androidx.compose.runtime.LaunchedEffect(Unit) { goBack(Unit) }
@@ -153,7 +177,8 @@ class DetailScreen(
             Column(Modifier.fillMaxSize().background(LightThemeTokens.colors.background)) {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(LightIcons.BACK, onClick = { goBack(Unit) }),
-                    center = LightTopBarCenter.Text("Recording"),
+                    center = LightTopBarCenter.Text(if (isSent) "Recording · sent" else "Recording"),
+                    rightButton = LightBarButton.LightIcon(LightIcons.SEND, onClick = { if (!sending) viewModel.send() }),
                 )
                 if (confirming) {
                     StateView(

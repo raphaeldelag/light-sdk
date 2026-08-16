@@ -21,6 +21,8 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 class LabelEditorScreen(
     sealedActivity: SealedLightActivity,
     private val initialValue: String,
+    private val title: String = "Label",
+    private val initialCaps: Boolean = true,
 ) : SimpleLightScreen<String>(sealedActivity) {
 
     @Composable
@@ -30,7 +32,7 @@ class LabelEditorScreen(
         val colors by LightThemeController.colors.collectAsState()
         LightTheme(colors = colors) {
             LightTextInputEditor(
-                title = "Label",
+                title = title,
                 state = textState,
                 keyboardOptionsFlow = keyboardOptionsFlow,
                 onSubmit = { result -> goBack(result.toString()) },
@@ -38,7 +40,7 @@ class LabelEditorScreen(
                 modifier = Modifier.background(LightThemeTokens.colors.background),
                 submitLabel = "SAVE",
                 singleLine = true,
-                initialCaps = true,
+                initialCaps = initialCaps,
             )
         }
     }

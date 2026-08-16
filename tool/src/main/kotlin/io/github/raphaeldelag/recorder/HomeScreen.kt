@@ -40,11 +40,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-data class RecordingRow(val recording: Recording, val durationMs: Long?)
+data class RecordingRow(val recording: Recording, val durationMs: Long?, val sent: Boolean)
 
 class HomeViewModel(
     private val repository: RecordingRepository,
     private val durations: DurationStore,
+    private val uploader: Uploader,
 ) : LightViewModel<Unit>() {
     val rows = MutableStateFlow<List<RecordingRow>>(emptyList())
     val loaded = MutableStateFlow(false)
@@ -57,7 +58,8 @@ class HomeViewModel(
         viewModelScope.launch {
             val list = withContext(Dispatchers.IO) { repository.list() }
             val known = durations.all()
-            rows.value = list.map { RecordingRow(it, known[it.name]) }
+            val sent = uploader.sentNames()
+            rows.value = list.map { RecordingRow(it, known[it.name], it.name in sent) }
             loaded.value = true
         }
     }
@@ -66,11 +68,14 @@ class HomeViewModel(
 @InitialScreen
 class HomeScreen(private val sealedActivity: SealedLightActivity) : LightScreen<Unit, HomeViewModel>(sealedActivity) {
 
-    private val repository = RecordingRepository(lightContext.filesDir)
+    // Recordings live under files/shared/ so LightOS (and its coming File Manager) can see them
+    // through the SDK's LightFileShare content provider.
+    private val repository = RecordingRepository(File(lightContext.filesDir, "shared"))
     private val durations = DurationStore(lightContext.dataStore)
+    private val uploader = Uploader(lightContext.dataStore)
 
     override val viewModelClass = HomeViewModel::class.java
-    override fun createViewModel() = HomeViewModel(repository, durations)
+    override fun createViewModel() = HomeViewModel(repository, durations, uploader)
 
     @Composable
     override fun Content() {
@@ -80,7 +85,12 @@ class HomeScreen(private val sealedActivity: SealedLightActivity) : LightScreen<
 
         LightTheme(colors = colors) {
             Column(Modifier.fillMaxSize().background(LightThemeTokens.colors.background)) {
-                LightTopBar(center = LightTopBarCenter.Text("Recorder"))
+                LightTopBar(
+                    center = LightTopBarCenter.Text("Recorder"),
+                    rightButton = LightBarButton.LightIcon(LightIcons.SETTINGS, onClick = {
+                        navigateTo({ SettingsScreen(it, repository, uploader) }) { viewModel.refresh() }
+                    }),
+                )
 
                 if (loaded && rows.isEmpty()) {
                     Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
@@ -99,7 +109,7 @@ class HomeScreen(private val sealedActivity: SealedLightActivity) : LightScreen<
                         items(rows, key = { it.recording.name }) { row ->
                             RecordingListItem(row) {
                                 navigateTo(
-                                    screenFactory = { DetailScreen(it, row.recording, repository, durations) },
+                                    screenFactory = { DetailScreen(it, row.recording, repository, durations, uploader) },
                                     resultCallback = { viewModel.refresh() },
                                 )
                             }
@@ -147,7 +157,7 @@ private fun RecordingListItem(row: RecordingRow, onClick: () -> Unit) {
         )
         val duration = row.durationMs?.let { formatClock(it) } ?: "--:--"
         LightText(
-            text = "${row.recording.displayDate}   $duration",
+            text = "${row.recording.displayDate}   $duration${if (row.sent) "   SENT" else ""}",
             variant = LightTextVariant.Detail,
             lighten = true,
             monospace = true,
