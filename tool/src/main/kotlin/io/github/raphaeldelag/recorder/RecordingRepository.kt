@@ -60,10 +60,18 @@ class RecordingRepository(filesDir: File, private val zone: ZoneId = ZoneId.syst
         if (target == recording.file) return recording
         if (target.exists()) return null
         if (!recording.file.renameTo(target)) return null
+        val oldSidecar = Sidecar.fileFor(recording.file)
+        if (oldSidecar.isFile) {
+            oldSidecar.renameTo(Sidecar.fileFor(target))
+            Sidecar.read(target)?.let { Sidecar.write(target, it.copy(label = slug.ifEmpty { null })) }
+        }
         return parse(target)
     }
 
-    fun delete(recording: Recording): Boolean = recording.file.delete()
+    fun delete(recording: Recording): Boolean {
+        Sidecar.fileFor(recording.file).delete()
+        return recording.file.delete()
+    }
 
     fun parse(file: File): Recording? {
         val name = file.name

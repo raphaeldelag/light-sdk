@@ -39,6 +39,7 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
 import java.io.File
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -46,7 +47,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-enum class RecordState { PermissionRequired, Ready, Recording, Review, ConfirmDiscard, Saved }
+enum class RecordState { PermissionRequired, Ready, Recording, Review, ConfirmDiscard, Consent, Saved }
 
 class RecordViewModel(
     private val repository: RecordingRepository,
@@ -60,8 +61,11 @@ class RecordViewModel(
     val playing = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
 
-    /** The recording just saved (state == Saved). */
+    /** The recording just saved (state == Consent / Saved). */
     val saved = MutableStateFlow<Recording?>(null)
+    val markers = MutableStateFlow<List<Marker>>(emptyList())
+    val lastMark = MutableStateFlow<String?>(null)
+    val consent = MutableStateFlow(Consent.NotDiscussed)
 
     private val recorder: LightAudioRecorder = audio.newRecorder()
     private val player: LightAudioPlayer = audio.newPlayer()
@@ -90,6 +94,7 @@ class RecordViewModel(
         if (state.value == RecordState.Recording) { finishRecording(); return true }
         if (state.value == RecordState.ConfirmDiscard) { state.value = RecordState.Review; return true }
         if (state.value == RecordState.Review) { requestDiscard(); return true }
+        if (state.value == RecordState.Consent) { confirmConsent(); return true }
         return false
     }
 
@@ -108,6 +113,7 @@ class RecordViewModel(
         file = f
         startedAt = SystemClock.elapsedRealtime()
         elapsedMs.value = 0L
+        markers.value = emptyList(); lastMark.value = null
         state.value = RecordState.Recording
         ticker?.cancel()
         ticker = viewModelScope.launch {
@@ -120,6 +126,25 @@ class RecordViewModel(
 
     fun stop() {
         if (state.value == RecordState.Recording) finishRecording()
+    }
+
+    /** Drop a timestamped marker at the current point of the take. */
+    fun mark() {
+        if (state.value != RecordState.Recording) return
+        val at = SystemClock.elapsedRealtime() - startedAt
+        markers.value = markers.value + Marker(at)
+        lastMark.value = "MARK ${markers.value.size} AT ${formatClock(at)}"
+    }
+
+    fun setConsent(c: Consent) { consent.value = c }
+
+    /** Consent chosen: write the sidecar and move to Saved. */
+    fun confirmConsent() {
+        val rec = saved.value ?: return
+        Sidecar.write(rec.file, Sidecar.forRecording(rec).copy(
+            durationMs = elapsedMs.value, consent = consent.value.name, markers = markers.value,
+        ))
+        state.value = RecordState.Saved
     }
 
     fun togglePlayback() {
@@ -138,9 +163,11 @@ class RecordViewModel(
         val dur = elapsedMs.value
         viewModelScope.launch {
             durations.set(recording.name, dur)
+            Sidecar.write(recording.file, Sidecar.forRecording(recording).copy(durationMs = dur, markers = markers.value))
             file = null
             saved.value = recording
-            state.value = RecordState.Saved
+            consent.value = Consent.NotDiscussed
+            state.value = RecordState.Consent
         }
     }
 
@@ -220,6 +247,9 @@ class RecordScreen(
         val playing by viewModel.playing.collectAsState()
         val error by viewModel.error.collectAsState()
         val saved by viewModel.saved.collectAsState()
+        val markers by viewModel.markers.collectAsState()
+        val lastMark by viewModel.lastMark.collectAsState()
+        val consent by viewModel.consent.collectAsState()
 
         LightTheme(colors = colors) {
             Column(Modifier.fillMaxSize().background(LightThemeTokens.colors.background)) {
@@ -240,12 +270,15 @@ class RecordScreen(
                         modifier = Modifier.weight(1f),
                     )
                     RecordState.Recording -> StateView(
-                        text = "RECORDING\n${formatClock(elapsed)}",
-                        actions = listOf(LightBarButton.LightIcon(LightIcons.STOP, viewModel::stop)),
+                        text = "RECORDING\n${formatClock(elapsed)}" + (lastMark?.let { "\n\n$it" } ?: "\n\n${markers.size} MARKS"),
+                        actions = listOf(
+                            LightBarButton.LightIcon(LightIcons.STAR, viewModel::mark, contentDescription = "Mark this moment"),
+                            LightBarButton.LightIcon(LightIcons.STOP, viewModel::stop),
+                        ),
                         modifier = Modifier.weight(1f),
                     )
                     RecordState.Review -> StateView(
-                        text = "REVIEW\n${formatClock(position)} / ${formatClock(duration)}",
+                        text = "REVIEW\n${formatClock(position)} / ${formatClock(duration)}" + (if (markers.isNotEmpty()) "\n${markers.size} MARKS" else ""),
                         actions = listOf(
                             LightBarButton.LightIcon(LightIcons.TRASH, viewModel::requestDiscard),
                             LightBarButton.LightIcon(if (playing) LightIcons.PAUSE else LightIcons.PLAY, viewModel::togglePlayback),
@@ -260,6 +293,12 @@ class RecordScreen(
                             LightBarButton.Text("CANCEL", onClick = viewModel::cancelDiscard),
                             LightBarButton.Text("DISCARD", onClick = viewModel::confirmDiscard),
                         ),
+                        modifier = Modifier.weight(1f),
+                    )
+                    RecordState.Consent -> ConsentView(
+                        selected = consent,
+                        onSelect = viewModel::setConsent,
+                        onDone = viewModel::confirmConsent,
                         modifier = Modifier.weight(1f),
                     )
                     RecordState.Saved -> StateView(
@@ -300,5 +339,35 @@ internal fun StateView(
             )
         }
         LightBottomBar(actions)
+    }
+}
+
+@Composable
+internal fun ConsentView(
+    selected: Consent,
+    onSelect: (Consent) -> Unit,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier) {
+        Column(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 1.5f.gridUnitsAsDp())) {
+            androidx.compose.foundation.layout.Spacer(Modifier.padding(top = 1f.gridUnitsAsDp()))
+            LightText("ATTRIBUTION AGREED WITH SOURCE", variant = LightTextVariant.Superfine, lighten = true)
+            for (c in Consent.entries) {
+                LightText(
+                    text = (if (c == selected) "\u25CF  " else "\u25CB  ") + c.label,
+                    variant = LightTextVariant.Copy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .lightClickable { onSelect(c) }
+                        .padding(vertical = 0.6f.gridUnitsAsDp()),
+                )
+            }
+            LightText(
+                "Saved in the recording's sidecar file. Tap the line on the recording screen later to change it.",
+                variant = LightTextVariant.Fine, lighten = true,
+            )
+        }
+        LightBottomBar(listOf(LightBarButton.LightIcon(LightIcons.ACCEPT, onDone)))
     }
 }

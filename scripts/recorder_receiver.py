@@ -73,14 +73,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if len(parts) != 1:
             self.send_error(400, "PUT /<token>/<filename>"); return
         name = re.sub(r"[^A-Za-z0-9._-]", "_", parts[0])
-        if not name.lower().endswith(".m4a"):
-            self.send_error(400, "only .m4a"); return
+        if not name.lower().endswith((".m4a", ".json")):
+            self.send_error(400, "only .m4a / .json"); return
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0 or length > 2_000_000_000:
             self.send_error(411, "Content-Length required"); return
         dest = os.path.join(self.server.dest_dir, name)
         base, ext = os.path.splitext(dest); n = 2
-        while os.path.exists(dest):
+        while ext != ".json" and os.path.exists(dest):
             dest = f"{base}-{n}{ext}"; n += 1
         tmp = dest + ".part"
         remaining = length

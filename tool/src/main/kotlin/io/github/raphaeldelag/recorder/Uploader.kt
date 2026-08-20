@@ -97,19 +97,25 @@ class Uploader(private val dataStore: DataStore<Preferences>) {
         response.bodyAsText().trim().ifEmpty { "ok" }
     }
 
-    /** PUT the file; on success records the send time. */
+    /** PUT the audio (and its sidecar, if any); on success records the send time. */
     suspend fun send(file: File): Result<Unit> = runCatching {
         val base = receiverUrl() ?: error("No receiver set")
+        putFile(base, file, "audio/mp4")
+        val sidecar = Sidecar.fileFor(file)
+        if (sidecar.isFile) putFile(base, sidecar, "application/json")
+        dataStore.edit { it[sentKey(file.name)] = System.currentTimeMillis() }
+    }
+
+    private suspend fun putFile(base: String, file: File, contentType: String) {
         val bytes = withContext(Dispatchers.IO) { file.readBytes() }
         val response = withContext(Dispatchers.IO) {
             client().put("$base/${file.name}") {
-                header("Content-Type", "audio/mp4")
+                header("Content-Type", contentType)
                 header("X-Recording-Name", file.name)
                 setBody(bytes)
             }
         }
         check(response.status.isSuccess()) { "HTTP ${response.status.value}: ${response.bodyAsText().take(80)}" }
-        dataStore.edit { it[sentKey(file.name)] = System.currentTimeMillis() }
     }
 
     fun close() { client?.close(); client = null }

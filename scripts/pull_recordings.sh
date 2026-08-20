@@ -18,7 +18,7 @@ if ! adb shell run-as "$PKG" true 2>/dev/null; then
   echo "run-as failed: is the debug Recorder installed on this device? (adb shell pm path $PKG)"; exit 1
 fi
 
-names=$(adb shell run-as "$PKG" ls files/shared/recordings 2>/dev/null | tr -d '\r' | grep -E '\.m4a$' || true)
+names=$(adb shell run-as "$PKG" ls files/shared/recordings 2>/dev/null | tr -d '\r' | grep -E '\.(m4a|json)$' || true)
 if [ -z "$names" ]; then echo "no recordings on device"; exit 0; fi
 
 pulled=0

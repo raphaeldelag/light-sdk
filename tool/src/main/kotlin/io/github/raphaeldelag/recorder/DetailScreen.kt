@@ -33,6 +33,9 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.LightTouchableProgressBar
+import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.lightClickable
+import androidx.compose.foundation.lazy.items
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +50,7 @@ class DetailViewModel(
 ) : LightViewModel<Unit>() {
     val sending = MutableStateFlow(false)
     val sent = MutableStateFlow(false)
+    val meta = MutableStateFlow<RecordingMeta?>(null)
     val recording = MutableStateFlow(initial)
     val positionMs = MutableStateFlow(0L)
     val durationMs = MutableStateFlow(0L)
@@ -71,6 +75,16 @@ class DetailViewModel(
     init {
         player.setSource(initial.file)
         viewModelScope.launch { sent.value = uploader.sentAt(initial.name) != null }
+        meta.value = Sidecar.forRecording(initial)
+    }
+
+    fun seekToMarker(m: Marker) { player.seekTo(m.ms); if (!playing.value) player.play() }
+
+    fun cycleConsent() {
+        val cur = meta.value ?: Sidecar.forRecording(recording.value)
+        val updated = cur.copy(consent = cur.consentEnum.next().name)
+        Sidecar.write(recording.value.file, updated)
+        meta.value = updated
     }
 
     fun send() {
@@ -119,6 +133,7 @@ class DetailViewModel(
         val renamed = repository.relabel(current, label)
         if (renamed == null) { message.value = "RENAME FAILED"; return }
         recording.value = renamed
+        meta.value = Sidecar.forRecording(renamed)
         viewModelScope.launch {
             durations.move(current.name, renamed.name)
             uploader.moveSent(current.name, renamed.name)
@@ -168,6 +183,7 @@ class DetailScreen(
         val message by viewModel.message.collectAsState()
         val sending by viewModel.sending.collectAsState()
         val isSent by viewModel.sent.collectAsState()
+        val meta by viewModel.meta.collectAsState()
 
         if (deleted) {
             androidx.compose.runtime.LaunchedEffect(Unit) { goBack(Unit) }
@@ -192,31 +208,42 @@ class DetailScreen(
                     )
                 } else {
                     Column(Modifier.weight(1f)) {
-                        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                LightText(
-                                    text = rec.displayTitle,
-                                    variant = LightTextVariant.Heading,
-                                    align = TextAlign.Center,
-                                    modifier = Modifier.padding(horizontal = 1.5f.gridUnitsAsDp()),
-                                )
-                                Spacer(Modifier.height(0.5f.gridUnitsAsDp()))
-                                LightText(
-                                    text = rec.displayDate,
-                                    variant = LightTextVariant.Detail,
-                                    lighten = true,
-                                    align = TextAlign.Center,
-                                )
-                                Spacer(Modifier.height(1.5f.gridUnitsAsDp()))
-                                LightText(
-                                    text = "${formatClock(position)} / ${formatClock(duration)}",
-                                    variant = LightTextVariant.Copy,
-                                    monospace = true,
-                                    align = TextAlign.Center,
-                                )
-                                message?.let {
-                                    Spacer(Modifier.height(0.5f.gridUnitsAsDp()))
-                                    LightText(text = it, variant = LightTextVariant.Detail, lighten = true)
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 1.5f.gridUnitsAsDp()), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Spacer(Modifier.height(1f.gridUnitsAsDp()))
+                            LightText(text = rec.displayTitle, variant = LightTextVariant.Heading, align = TextAlign.Center)
+                            LightText(text = rec.displayDate, variant = LightTextVariant.Detail, lighten = true, align = TextAlign.Center)
+                            Spacer(Modifier.height(0.5f.gridUnitsAsDp()))
+                            LightText(
+                                text = (meta?.consentEnum ?: Consent.NotDiscussed).label,
+                                variant = LightTextVariant.Detail,
+                                align = TextAlign.Center,
+                                underline = true,
+                                modifier = Modifier.lightClickable { viewModel.cycleConsent() },
+                            )
+                            Spacer(Modifier.height(0.75f.gridUnitsAsDp()))
+                            LightText(
+                                text = "${formatClock(position)} / ${formatClock(duration)}",
+                                variant = LightTextVariant.Copy, monospace = true, align = TextAlign.Center,
+                            )
+                            message?.let { LightText(text = it, variant = LightTextVariant.Detail, lighten = true) }
+                        }
+                        val marks = meta?.markers.orEmpty()
+                        if (marks.isEmpty()) {
+                            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                LightText("NO MARKS", variant = LightTextVariant.Detail, lighten = true)
+                            }
+                        } else {
+                            LightLazyScrollView(
+                                modifier = Modifier.weight(1f).fillMaxWidth().padding(start = 1.5f.gridUnitsAsDp(), top = 0.5f.gridUnitsAsDp()),
+                                uniformItemHeightGridUnits = 1.6f,
+                            ) {
+                                items(marks.size) { i ->
+                                    val m = marks[i]
+                                    LightText(
+                                        text = "MARK ${i + 1}   ${formatClock(m.ms)}" + (if (m.note.isNotBlank()) "   ${m.note}" else ""),
+                                        variant = LightTextVariant.Copy, monospace = true,
+                                        modifier = Modifier.fillMaxWidth().lightClickable { viewModel.seekToMarker(m) },
+                                    )
                                 }
                             }
                         }
