@@ -89,6 +89,28 @@ class Uploader(private val dataStore: DataStore<Preferences>) {
         }
     }
 
+    sealed class TranscriptResult {
+        data class Ready(val text: String) : TranscriptResult()
+        object Pending : TranscriptResult()
+        data class Failed(val message: String) : TranscriptResult()
+    }
+
+    /** GET <receiverUrl>/transcript/<name>: the receiver transcribes locally with Whisper. */
+    suspend fun fetchTranscript(fileName: String): TranscriptResult {
+        val base = receiverUrl() ?: return TranscriptResult.Failed("No receiver set")
+        return try {
+            val response = withContext(Dispatchers.IO) { client().get("$base/transcript/$fileName") }
+            when (response.status.value) {
+                200 -> TranscriptResult.Ready(response.bodyAsText())
+                202 -> TranscriptResult.Pending
+                404 -> TranscriptResult.Failed("Not on the receiver yet — send it first")
+                else -> TranscriptResult.Failed("HTTP ${response.status.value}")
+            }
+        } catch (e: Exception) {
+            TranscriptResult.Failed(e.message ?: "Network error")
+        }
+    }
+
     /** GET <receiverUrl>/ping; the receiver answers "ok". */
     suspend fun ping(): Result<String> = runCatching {
         val base = receiverUrl() ?: error("No receiver set")

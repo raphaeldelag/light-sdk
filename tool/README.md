@@ -5,6 +5,7 @@ A reporter's voice-memo tool for the Light Phone III, built on the Light SDK.
 - Record with the phone mic (`LightAudioRecorder`, AAC `.m4a`), review before saving, discard takes you don't want.
 - **Marks**: tap the star during a take to drop a timestamped marker ("that's the quote"); tap a mark later to jump playback there.
 - **Attribution**: after saving, pick what was agreed with the source (on record / background / off record); shown on the recording screen and tappable to change.
+- **Transcripts**: the receiver transcribes each memo locally with Whisper (`--model small` by default; audio never leaves your Mac) and the recording screen's FETCH TRANSCRIPT line pulls the text back to the phone (kept locally once fetched).
 - Each recording carries a JSON **sidecar** (`<name>.json`: recorded-at, duration, label, consent, markers) that renames, deletes, sends, and pulls together with the audio — so the terms and the moments survive the trip to your transcription pipeline.
 - Give a memo a short label on the LP3 keyboard; the label is stored in the filename
   (`yyyyMMdd-HHmmss_label.m4a`), so files stay self-describing when pulled off the phone.

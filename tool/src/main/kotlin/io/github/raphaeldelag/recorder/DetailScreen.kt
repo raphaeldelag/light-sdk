@@ -51,6 +51,8 @@ class DetailViewModel(
     val sending = MutableStateFlow(false)
     val sent = MutableStateFlow(false)
     val meta = MutableStateFlow<RecordingMeta?>(null)
+    val transcript = MutableStateFlow<String?>(null)      // local copy if present
+    val transcriptStatus = MutableStateFlow<String?>(null)
     val recording = MutableStateFlow(initial)
     val positionMs = MutableStateFlow(0L)
     val durationMs = MutableStateFlow(0L)
@@ -76,6 +78,27 @@ class DetailViewModel(
         player.setSource(initial.file)
         viewModelScope.launch { sent.value = uploader.sentAt(initial.name) != null }
         meta.value = Sidecar.forRecording(initial)
+        transcript.value = transcriptFile(initial).takeIf { it.isFile }?.readText()
+    }
+
+    private fun transcriptFile(rec: Recording) =
+        java.io.File(rec.file.parentFile, rec.file.name.removeSuffix(RecordingRepository.EXT) + ".txt")
+
+    /** Fetch the Whisper transcript from the receiver; keep a local copy. */
+    fun fetchTranscript(onReady: (String) -> Unit) {
+        viewModelScope.launch {
+            transcriptStatus.value = "FETCHING…"
+            when (val r = uploader.fetchTranscript(recording.value.name)) {
+                is Uploader.TranscriptResult.Ready -> {
+                    transcriptFile(recording.value).writeText(r.text)
+                    transcript.value = r.text
+                    transcriptStatus.value = null
+                    onReady(r.text)
+                }
+                is Uploader.TranscriptResult.Pending -> transcriptStatus.value = "TRANSCRIBING ON MAC — TRY AGAIN SHORTLY"
+                is Uploader.TranscriptResult.Failed -> transcriptStatus.value = r.message.uppercase()
+            }
+        }
     }
 
     fun seekToMarker(m: Marker) { player.seekTo(m.ms); if (!playing.value) player.play() }
@@ -145,6 +168,7 @@ class DetailViewModel(
     fun confirmDelete() {
         player.stop()
         val current = recording.value
+        transcriptFile(current).delete()
         if (repository.delete(current)) {
             viewModelScope.launch { durations.remove(current.name); uploader.forgetSent(current.name) }
             deleted.value = true
@@ -184,6 +208,8 @@ class DetailScreen(
         val sending by viewModel.sending.collectAsState()
         val isSent by viewModel.sent.collectAsState()
         val meta by viewModel.meta.collectAsState()
+        val transcript by viewModel.transcript.collectAsState()
+        val transcriptStatus by viewModel.transcriptStatus.collectAsState()
 
         if (deleted) {
             androidx.compose.runtime.LaunchedEffect(Unit) { goBack(Unit) }
@@ -224,6 +250,23 @@ class DetailScreen(
                             LightText(
                                 text = "${formatClock(position)} / ${formatClock(duration)}",
                                 variant = LightTextVariant.Copy, monospace = true, align = TextAlign.Center,
+                            )
+                            LightText(
+                                text = transcriptStatus ?: if (transcript != null) "TRANSCRIPT" else "FETCH TRANSCRIPT",
+                                variant = LightTextVariant.Detail,
+                                align = TextAlign.Center,
+                                underline = transcriptStatus == null,
+                                lighten = transcriptStatus != null,
+                                modifier = Modifier.lightClickable {
+                                    val local = transcript
+                                    if (local != null) {
+                                        navigateTo({ TranscriptScreen(it, rec.displayTitle, local) })
+                                    } else {
+                                        viewModel.fetchTranscript { text ->
+                                            navigateTo({ TranscriptScreen(it, rec.displayTitle, text) })
+                                        }
+                                    }
+                                },
                             )
                             message?.let { LightText(text = it, variant = LightTextVariant.Detail, lighten = true) }
                         }

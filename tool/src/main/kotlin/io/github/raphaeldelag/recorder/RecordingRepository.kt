@@ -60,6 +60,8 @@ class RecordingRepository(filesDir: File, private val zone: ZoneId = ZoneId.syst
         if (target == recording.file) return recording
         if (target.exists()) return null
         if (!recording.file.renameTo(target)) return null
+        val oldTxt = File(recordingsDir, stampBase(recording.file.name).let { recording.file.name.removeSuffix(EXT) } + ".txt")
+        if (oldTxt.isFile) oldTxt.renameTo(File(recordingsDir, target.name.removeSuffix(EXT) + ".txt"))
         val oldSidecar = Sidecar.fileFor(recording.file)
         if (oldSidecar.isFile) {
             oldSidecar.renameTo(Sidecar.fileFor(target))
