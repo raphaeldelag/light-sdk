@@ -1,0 +1,10 @@
+[tool]
+id = "io.github.raphaeldelag.desk"
+label = "Desk"
+versionCode = 1
+versionName = "0.1.0"
+permissions = ["android.permission.INTERNET", "android.permission.CAMERA"]
+capabilities = []
+orientation = "portrait"
+# scripts/target.sh phone|emu desk rewrites the next line
+serverPackage = "com.thelightphone.sdk.emulator"
